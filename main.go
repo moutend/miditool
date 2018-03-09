@@ -12,6 +12,11 @@ import (
 	"github.com/moutend/go-midi/event"
 )
 
+const (
+	SOLO = false
+	MUTE = true
+)
+
 var (
 	Version   = "develop"
 	Revision  = "latest"
@@ -76,23 +81,38 @@ func run(args []string) error {
 	case "mute":
 		return MuteCommand(args)
 	case "velocity":
-		return VelocityCommand(args)
+		return PlusCommand(args)
 	default:
 		return fmt.Errorf("%s is not a subcommand", command)
 	}
 }
 
 func SoloCommand(args []string) error {
+	return SoloOrMuteCommand(SOLO, args)
+}
+
+func MuteCommand(args []string) error {
+	return SoloOrMuteCommand(MUTE, args)
+}
+
+func SoloOrMuteCommand(mode bool, args []string) error {
 	var notesFlag NotesFlag
+	var outputFilenameFlag string
 
 	f := flag.NewFlagSet("solo", flag.ExitOnError)
-	f.Var(&notesFlag, "n", "specify notes which play")
+	f.Var(&notesFlag, "note", "specify notes which play")
+	f.Var(&notesFlag, "n", "alias of --note")
+	f.StringVar(&outputFilenameFlag, "output", "output.mid", "specify output file name")
+	f.StringVar(&outputFilenameFlag, "o", "output.mid", "alias of --output")
 
 	err := f.Parse(args)
 	if err != nil {
 		return err
 	}
 	args = f.Args()
+	if len(args) < 1 {
+		return nil
+	}
 
 	file, err := ioutil.ReadFile(args[0])
 	if err != nil {
@@ -104,26 +124,72 @@ func SoloCommand(args []string) error {
 		return err
 	}
 
-	for _, track := range m.Tracks {
-		for _, e := range track.Events {
+	for _, t := range m.Tracks {
+		for _, e := range t.Events {
 			switch e.(type) {
 			case *event.NoteOnEvent:
 				noteOnEvent := e.(*event.NoteOnEvent)
-				if !HasNotes(notesFlag.Notes, noteOnEvent.Note()) {
+				if mode == HasNotes(notesFlag.Notes, noteOnEvent.Note()) {
 					noteOnEvent.SetVelocity(0)
 				}
 			}
 		}
 	}
-	return ioutil.WriteFile("output.mid", m.Serialize(), 0644)
+
+	return ioutil.WriteFile(outputFilenameFlag, m.Serialize(), 0644)
 }
 
-func MuteCommand(args []string) error {
-	return nil
-}
+func PlusCommand(args []string) error {
+	var notesFlag NotesFlag
+	var outputFilenameFlag string
+	var globalVelocityFlag int
 
-func VelocityCommand(args []string) error {
-	return nil
+	f := flag.NewFlagSet("solo", flag.ExitOnError)
+	f.IntVar(&globalVelocityFlag, "v", 0, "specify velocity")
+	f.Var(&notesFlag, "note", "specify notes which play")
+	f.Var(&notesFlag, "n", "alias of --note")
+	f.StringVar(&outputFilenameFlag, "output", "output.mid", "specify output file name")
+	f.StringVar(&outputFilenameFlag, "o", "output.mid", "alias of --output")
+
+	err := f.Parse(args)
+	if err != nil {
+		return err
+	}
+	args = f.Args()
+	if len(args) < 1 {
+		return nil
+	}
+
+	file, err := ioutil.ReadFile(args[0])
+	if err != nil {
+		return err
+	}
+
+	m, err := midi.NewParser(file).Parse()
+	if err != nil {
+		return err
+	}
+
+	for _, t := range m.Tracks {
+		for _, e := range t.Events {
+			switch e.(type) {
+			case *event.NoteOnEvent:
+				noteOnEvent := e.(*event.NoteOnEvent)
+				if HasNotes(notesFlag.Notes, noteOnEvent.Note()) {
+					velocity := noteOnEvent.Velocity() + uint8(globalVelocityFlag)
+					if velocity > 127 {
+						velocity = 127
+					}
+					if velocity < 0 {
+						velocity = 0
+					}
+					noteOnEvent.SetVelocity(velocity)
+				}
+			}
+		}
+	}
+
+	return ioutil.WriteFile(outputFilenameFlag, m.Serialize(), 0644)
 }
 
 func HelpCommand(args []string) error {
